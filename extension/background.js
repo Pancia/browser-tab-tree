@@ -9,6 +9,8 @@ function ensurePort() {
   if (!port) {
     port = chrome.runtime.connectNative(HOST_NAME);
     port.onDisconnect.addListener(() => {
+      const err = chrome.runtime.lastError;
+      console.error(`[BrowserTabTree] Host disconnected: ${err ? err.message : "unknown reason"}`);
       port = null;
     });
   }

@@ -236,7 +236,7 @@ def render_markdown() -> str:
         title = tab["title"] or tab["url"] or "(untitled)"
         url = tab["url"]
         lines.append(f"{indent}- [{title}]({url})")
-        for child_id in sorted(tab["children"], key=lambda c: tabs[c]["index"] if c in tabs else 0):
+        for child_id in sorted(tab["children"], key=lambda c: tabs[c].get("index", 0) if c in tabs else 0):
             child = tabs.get(child_id)
             if child is not None and child.get("groupId", -1) != render_gid:
                 continue
@@ -261,7 +261,7 @@ def render_markdown() -> str:
 
         lines.append(f"\n## Window {wid}")
 
-        ungrouped.sort(key=lambda tid: tabs[tid]["index"] if tid in tabs else 0)
+        ungrouped.sort(key=lambda tid: tabs[tid].get("index", 0) if tid in tabs else 0)
         for tid in ungrouped:
             _render_tab(tid, 0, -1)
 
@@ -269,7 +269,7 @@ def render_markdown() -> str:
         def _group_sort_key(gid: int) -> int:
             all_group_tabs = [t for t in tabs.values() if t.get("groupId") == gid and t["windowId"] == wid]
             if all_group_tabs:
-                return min(t["index"] for t in all_group_tabs)
+                return min(t.get("index", 0) for t in all_group_tabs)
             return 0
 
         for gid in sorted(group_roots, key=_group_sort_key):
@@ -279,7 +279,7 @@ def render_markdown() -> str:
             title = group.get("title", "") or "(unnamed)"
             lines.append(f"\n### {emoji} {title}")
             root_ids = group_roots[gid]
-            root_ids.sort(key=lambda tid: tabs[tid]["index"] if tid in tabs else 0)
+            root_ids.sort(key=lambda tid: tabs[tid].get("index", 0) if tid in tabs else 0)
             for tid in root_ids:
                 _render_tab(tid, 0, gid)
 
