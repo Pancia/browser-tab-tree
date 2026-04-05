@@ -38,6 +38,7 @@ chrome.tabs.onCreated.addListener((tab) => {
     index: tab.index,
     url: tab.pendingUrl || tab.url || "",
     title: tab.title || "",
+    groupId: tab.groupId,
   };
   if (tab.openerTabId != null) {
     const url = tab.pendingUrl || tab.url || "";
@@ -63,14 +64,56 @@ function isNavigableUrl(url) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!changeInfo.url) return;
-  if (!isNavigableUrl(changeInfo.url)) return;
+  if (changeInfo.groupId !== undefined) {
+    send({
+      type: "TAB_GROUP_CHANGED",
+      ts: now(),
+      tabId: tabId,
+      groupId: changeInfo.groupId,
+    });
+  }
+  if (changeInfo.url && isNavigableUrl(changeInfo.url)) {
+    send({
+      type: "TAB_NAVIGATE",
+      ts: now(),
+      tabId: tabId,
+      url: changeInfo.url,
+      title: tab.title || "",
+    });
+  }
+});
+
+// --- Tab group listeners ---
+
+chrome.tabGroups.onCreated.addListener((group) => {
   send({
-    type: "TAB_NAVIGATE",
+    type: "GROUP_UPDATE",
     ts: now(),
-    tabId: tabId,
-    url: changeInfo.url,
-    title: tab.title || "",
+    groupId: group.id,
+    windowId: group.windowId,
+    title: group.title,
+    color: group.color,
+    collapsed: group.collapsed,
+  });
+});
+
+chrome.tabGroups.onUpdated.addListener((group) => {
+  send({
+    type: "GROUP_UPDATE",
+    ts: now(),
+    groupId: group.id,
+    windowId: group.windowId,
+    title: group.title,
+    color: group.color,
+    collapsed: group.collapsed,
+  });
+});
+
+chrome.tabGroups.onRemoved.addListener((group) => {
+  send({
+    type: "GROUP_REMOVE",
+    ts: now(),
+    groupId: group.id,
   });
 });
 
@@ -94,7 +137,22 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
   });
 });
 
-// --- Startup: sync all existing tabs ---
+// --- Startup: sync all existing groups and tabs ---
+
+async function syncExistingGroups() {
+  const allGroups = await chrome.tabGroups.query({});
+  for (const group of allGroups) {
+    send({
+      type: "GROUP_UPDATE",
+      ts: now(),
+      groupId: group.id,
+      windowId: group.windowId,
+      title: group.title,
+      color: group.color,
+      collapsed: group.collapsed,
+    });
+  }
+}
 
 async function syncExistingTabs() {
   const allTabs = await chrome.tabs.query({});
@@ -107,8 +165,9 @@ async function syncExistingTabs() {
       index: tab.index,
       url: tab.url || "",
       title: tab.title || "",
+      groupId: tab.groupId,
     });
   }
 }
 
-syncExistingTabs();
+syncExistingGroups().then(() => syncExistingTabs());

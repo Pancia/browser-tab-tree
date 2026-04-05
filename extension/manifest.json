@@ -3,7 +3,7 @@
   "name": "Browser Tab Tree",
   "version": "0.1.0",
   "description": "Tracks tab parentage and writes a live markdown tree to disk via Native Messaging.",
-  "permissions": ["tabs", "nativeMessaging"],
+  "permissions": ["tabs", "tabGroups", "nativeMessaging"],
   "background": {
     "service_worker": "background.js"
   }
