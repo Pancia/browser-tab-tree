@@ -1,0 +1,17 @@
+- | 1 | Annotation preservation — keep user-added notes in current.md between rewrites, keyed by URL | open | 
+- | 2 | openerTabId heuristics — infer parentage from most-recently-active tab when openerTabId is missing | open | 
+- | 3 | Debounced writes — batch rapid events into one file write | open | 
+- | 4 | Time tracking — log TAB_ACTIVATE events, compute time-per-tab | open | 
+- | 5 | Reading queue markers — [ ] unread, [x] done, [>] reference | open | 
+- | 6 | Historical tree viewer — CLI that replays any day's log | open | 
+- | 7 | Click-to-focus — click link in current.md to focus that tab in browser | open | 
+- | 8 | Bidirectional sync — edit current.md to close/reorder tabs | open | 
+- | 9 | VS Code extension — render tree natively instead of watching current.md | open | 
+- | 10 | Linux/Windows support — install script for other OS paths | open | 
+- | 11 | Log rotation cleanup — purge old .jsonl files | open | 
+- | 12 | Extension popup/options UI | open | 
+- | 13 | Multi-browser support — single tree from Chrome + Brave + etc | open | 
+- | 14 | pyenv shim workaround — run_host.sh hardcodes pyenv path, make more portable | open | 
+- | 15 | Brave-specific: verify openerTabId behavior matches Chrome (Brave may differ) | open | 
+- | 16 | Service worker 5-min cap — empirically test if native messaging port keeps it alive or not | open | 
+- | 17 | Tag extraction — auto-tag tabs by domain or page content | open | 
