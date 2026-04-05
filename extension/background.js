@@ -172,4 +172,5 @@ async function syncExistingTabs() {
   }
 }
 
+send({ type: "SYNC_START", ts: now() });
 syncExistingGroups().then(() => syncExistingTabs());

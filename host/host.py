@@ -169,7 +169,14 @@ def handle_tab_group_changed(event: dict) -> None:
     tab["groupId"] = event.get("groupId", -1)
 
 
+def handle_sync_start(_event: dict) -> None:
+    """Extension is about to send a full sync — clear stale state."""
+    tabs.clear()
+    groups.clear()
+
+
 HANDLERS: dict[str, Any] = {
+    "SYNC_START": handle_sync_start,
     "TAB_OPEN": handle_tab_open,
     "TAB_CLOSE": handle_tab_close,
     "TAB_NAVIGATE": handle_tab_navigate,
