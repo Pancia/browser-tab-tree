@@ -39,7 +39,10 @@ chrome.tabs.onCreated.addListener((tab) => {
     title: tab.title || "",
   };
   if (tab.openerTabId != null) {
-    event.openerTabId = tab.openerTabId;
+    const url = tab.pendingUrl || tab.url || "";
+    if (url && !url.startsWith("chrome://newtab")) {
+      event.openerTabId = tab.openerTabId;
+    }
   }
   send(event);
 });
