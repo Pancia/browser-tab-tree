@@ -35,6 +35,12 @@ Tab = dict[str, Any]
 #        url (str), title (str), index (int), children (list[int])
 
 tabs: dict[int, Tab] = {}
+groups: dict[int, dict] = {}
+
+GROUP_COLOR_EMOJI: dict[str, str] = {
+    "grey": "⚪", "blue": "🔵", "red": "🔴", "yellow": "🟡",
+    "green": "🟢", "pink": "🩷", "purple": "🟣", "cyan": "🩵", "orange": "🟠",
+}
 
 # ---------------------------------------------------------------------------
 # Message I/O (native messaging protocol)
@@ -84,6 +90,7 @@ def handle_tab_open(event: dict) -> None:
         "title": title,
         "index": index,
         "children": [],
+        "groupId": event.get("groupId", -1),
     }
 
 
@@ -134,11 +141,42 @@ def handle_tab_move(event: dict) -> None:
         tab["windowId"] = event["windowId"]
 
 
+def handle_group_update(event: dict) -> None:
+    group_id: int = event["groupId"]
+    groups[group_id] = {
+        "groupId": group_id,
+        "windowId": event.get("windowId", 0),
+        "title": event.get("title", ""),
+        "color": event.get("color", "grey"),
+        "collapsed": event.get("collapsed", False),
+    }
+
+
+def handle_group_remove(event: dict) -> None:
+    group_id: int = event["groupId"]
+    groups.pop(group_id, None)
+    # Reset any tabs still referencing this group
+    for tab in tabs.values():
+        if tab.get("groupId") == group_id:
+            tab["groupId"] = -1
+
+
+def handle_tab_group_changed(event: dict) -> None:
+    tab_id: int = event["tabId"]
+    tab = tabs.get(tab_id)
+    if tab is None:
+        return
+    tab["groupId"] = event.get("groupId", -1)
+
+
 HANDLERS: dict[str, Any] = {
     "TAB_OPEN": handle_tab_open,
     "TAB_CLOSE": handle_tab_close,
     "TAB_NAVIGATE": handle_tab_navigate,
     "TAB_MOVE": handle_tab_move,
+    "GROUP_UPDATE": handle_group_update,
+    "GROUP_REMOVE": handle_group_remove,
+    "TAB_GROUP_CHANGED": handle_tab_group_changed,
 }
 
 # ---------------------------------------------------------------------------
@@ -177,7 +215,7 @@ def append_log(event: dict) -> None:
 def write_state() -> None:
     _atomic_write(
         OUTPUT_DIR / "state.json",
-        json.dumps(tabs, indent=2, sort_keys=True) + "\n",
+        json.dumps({"tabs": tabs, "groups": groups}, indent=2, sort_keys=True) + "\n",
     )
 
 
@@ -188,15 +226,9 @@ def render_markdown() -> str:
     for tab in tabs.values():
         windows.setdefault(tab["windowId"], [])
 
-    # Identify root tabs (parentId is None) per window
-    roots: dict[int, list[int]] = {}
-    for tab in tabs.values():
-        if tab["parentId"] is None:
-            roots.setdefault(tab["windowId"], []).append(tab["tabId"])
-
     lines: list[str] = ["# Open Tabs"]
 
-    def _render_tab(tab_id: int, depth: int) -> None:
+    def _render_tab(tab_id: int, depth: int, render_gid: int) -> None:
         tab = tabs.get(tab_id)
         if tab is None:
             return
@@ -205,16 +237,51 @@ def render_markdown() -> str:
         url = tab["url"]
         lines.append(f"{indent}- [{title}]({url})")
         for child_id in sorted(tab["children"], key=lambda c: tabs[c]["index"] if c in tabs else 0):
-            _render_tab(child_id, depth + 1)
+            child = tabs.get(child_id)
+            if child is not None and child.get("groupId", -1) != render_gid:
+                continue
+            _render_tab(child_id, depth + 1, render_gid)
 
     for wid in sorted(windows):
-        root_ids = roots.get(wid, [])
-        if not root_ids:
+        # Partition tabs into group roots: tabs that are roots within their group
+        # A tab is a group root if parentId is None or parent has different groupId
+        group_roots: dict[int, list[int]] = {}  # groupId -> [tabId, ...]
+        for tab in tabs.values():
+            if tab["windowId"] != wid:
+                continue
+            gid = tab.get("groupId", -1)
+            parent = tabs.get(tab["parentId"]) if tab["parentId"] is not None else None
+            if parent is None or parent.get("groupId", -1) != gid:
+                group_roots.setdefault(gid, []).append(tab["tabId"])
+
+        # Ungrouped roots first
+        ungrouped = group_roots.pop(-1, [])
+        if not ungrouped and not group_roots:
             continue
-        root_ids.sort(key=lambda tid: tabs[tid]["index"] if tid in tabs else 0)
+
         lines.append(f"\n## Window {wid}")
-        for tid in root_ids:
-            _render_tab(tid, 0)
+
+        ungrouped.sort(key=lambda tid: tabs[tid]["index"] if tid in tabs else 0)
+        for tid in ungrouped:
+            _render_tab(tid, 0, -1)
+
+        # Groups ordered by minimum tab index within the group
+        def _group_sort_key(gid: int) -> int:
+            all_group_tabs = [t for t in tabs.values() if t.get("groupId") == gid and t["windowId"] == wid]
+            if all_group_tabs:
+                return min(t["index"] for t in all_group_tabs)
+            return 0
+
+        for gid in sorted(group_roots, key=_group_sort_key):
+            group = groups.get(gid, {})
+            color = group.get("color", "grey")
+            emoji = GROUP_COLOR_EMOJI.get(color, "⚪")
+            title = group.get("title", "") or "(unnamed)"
+            lines.append(f"\n### {emoji} {title}")
+            root_ids = group_roots[gid]
+            root_ids.sort(key=lambda tid: tabs[tid]["index"] if tid in tabs else 0)
+            for tid in root_ids:
+                _render_tab(tid, 0, gid)
 
     return "\n".join(lines) + "\n"
 
@@ -236,7 +303,7 @@ def flush_outputs(event: dict | None = None) -> None:
 
 
 def load_state() -> None:
-    global tabs
+    global tabs, groups
     state_path = OUTPUT_DIR / "state.json"
     if not state_path.exists():
         return
@@ -247,10 +314,17 @@ def load_state() -> None:
     try:
         with open(state_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        # Keys in JSON are strings; convert to int
-        tabs = {int(k): v for k, v in raw.items()}
+        # New format: {"tabs": {...}, "groups": {...}}
+        if "tabs" in raw and isinstance(raw.get("tabs"), dict):
+            tabs = {int(k): v for k, v in raw["tabs"].items()}
+            groups = {int(k): v for k, v in raw.get("groups", {}).items()}
+        else:
+            # Legacy flat-tabs format
+            tabs = {int(k): v for k, v in raw.items()}
+            groups = {}
     except (json.JSONDecodeError, OSError, ValueError):
         tabs = {}
+        groups = {}
 
 
 # ---------------------------------------------------------------------------

@@ -94,7 +94,8 @@ def test_basic_tab_open():
         check("[Google](https://google.com)" in md, "tab link present", md)
 
         state = read_state(tmp)
-        check("1" in state or 1 in state, "tab 1 in state.json")
+        tab_state = state.get("tabs", state)
+        check("1" in tab_state or 1 in tab_state, "tab 1 in state.json")
 
 
 def test_child_tab():
@@ -284,7 +285,6 @@ def test_restart_from_state():
         check(proc1.returncode == 0, "first run exits 0")
 
         md1 = read_md(tmp)
-        state1 = read_output(tmp, "state.json")
 
         # Second run: no new events, just restart — should load state.json
         proc2 = run_host([], tmp)
@@ -292,6 +292,175 @@ def test_restart_from_state():
 
         md2 = read_md(tmp)
         check(md1 == md2, "current.md identical after restart",
+              f"BEFORE:\n{md1}\nAFTER:\n{md2}")
+
+
+def test_group_basic():
+    """8. GROUP_UPDATE + TAB_OPEN with groupId — verify group heading in markdown."""
+    print("\n--- test_group_basic ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        events = [
+            {"type": "GROUP_UPDATE", "groupId": 10, "windowId": 100,
+             "title": "Research", "color": "blue", "collapsed": False},
+            {"type": "TAB_OPEN", "tabId": 1, "windowId": 100, "index": 0,
+             "url": "https://google.com", "title": "Google", "groupId": 10},
+            {"type": "TAB_OPEN", "tabId": 2, "windowId": 100, "index": 1,
+             "url": "https://github.com", "title": "GitHub", "groupId": 10},
+        ]
+        proc = run_host(events, tmp)
+        check(proc.returncode == 0, "host exits 0", f"rc={proc.returncode} stderr={proc.stderr!r}")
+
+        md = read_md(tmp)
+        check("### 🔵 Research" in md, "group heading present", md)
+        check("Google" in md, "tab 1 in md", md)
+        check("GitHub" in md, "tab 2 in md", md)
+
+
+def test_tab_group_changed():
+    """9. TAB_GROUP_CHANGED — move a tab into a group."""
+    print("\n--- test_tab_group_changed ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        events = [
+            {"type": "GROUP_UPDATE", "groupId": 10, "windowId": 100,
+             "title": "Research", "color": "green", "collapsed": False},
+            {"type": "TAB_OPEN", "tabId": 1, "windowId": 100, "index": 0,
+             "url": "https://google.com", "title": "Google"},
+            # Tab starts ungrouped, then moves into the group
+            {"type": "TAB_GROUP_CHANGED", "tabId": 1, "groupId": 10},
+        ]
+        proc = run_host(events, tmp)
+        check(proc.returncode == 0, "host exits 0")
+
+        md = read_md(tmp)
+        check("### 🟢 Research" in md, "group heading present", md)
+        # Google should be under the group heading, not before it
+        lines = md.splitlines()
+        heading_idx = next((i for i, l in enumerate(lines) if "Research" in l), None)
+        google_idx = next((i for i, l in enumerate(lines) if "Google" in l), None)
+        check(heading_idx is not None and google_idx is not None, "heading and tab found")
+        if heading_idx is not None and google_idx is not None:
+            check(google_idx > heading_idx, "tab appears after group heading")
+
+
+def test_group_remove():
+    """10. GROUP_REMOVE — verify group heading disappears, tabs become ungrouped."""
+    print("\n--- test_group_remove ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        events = [
+            {"type": "GROUP_UPDATE", "groupId": 10, "windowId": 100,
+             "title": "Research", "color": "red", "collapsed": False},
+            {"type": "TAB_OPEN", "tabId": 1, "windowId": 100, "index": 0,
+             "url": "https://google.com", "title": "Google", "groupId": 10},
+            {"type": "GROUP_REMOVE", "groupId": 10},
+        ]
+        proc = run_host(events, tmp)
+        check(proc.returncode == 0, "host exits 0")
+
+        md = read_md(tmp)
+        check("### 🔴 Research" not in md, "group heading removed", md)
+        check("Google" in md, "tab still present after group removal", md)
+        # Tab should now be ungrouped (at root level under window)
+        lines = [l for l in md.splitlines() if l.strip().startswith("- [")]
+        for line in lines:
+            indent = len(line) - len(line.lstrip())
+            check(indent == 0, f"ungrouped tab at root indent: {line.strip()!r}")
+
+
+def test_group_cross_parent():
+    """11. Cross-group parent-child — each appears in its own group section."""
+    print("\n--- test_group_cross_parent ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        events = [
+            {"type": "GROUP_UPDATE", "groupId": 10, "windowId": 100,
+             "title": "Research", "color": "blue", "collapsed": False},
+            {"type": "GROUP_UPDATE", "groupId": 20, "windowId": 100,
+             "title": "Social", "color": "green", "collapsed": False},
+            {"type": "TAB_OPEN", "tabId": 1, "windowId": 100, "index": 0,
+             "url": "https://google.com", "title": "Google", "groupId": 10},
+            # Child opens from parent but is in a different group
+            {"type": "TAB_OPEN", "tabId": 2, "windowId": 100, "index": 1,
+             "url": "https://github.com", "title": "GitHub", "openerTabId": 1, "groupId": 20},
+        ]
+        proc = run_host(events, tmp)
+        check(proc.returncode == 0, "host exits 0")
+
+        md = read_md(tmp)
+        check("### 🔵 Research" in md, "group 1 heading present", md)
+        check("### 🟢 Social" in md, "group 2 heading present", md)
+
+        lines = md.splitlines()
+        research_idx = next((i for i, l in enumerate(lines) if "Research" in l), None)
+        social_idx = next((i for i, l in enumerate(lines) if "Social" in l), None)
+        google_idx = next((i for i, l in enumerate(lines) if "Google" in l), None)
+        github_idx = next((i for i, l in enumerate(lines) if "GitHub" in l), None)
+
+        # Google should be under Research, GitHub under Social
+        if research_idx is not None and google_idx is not None:
+            check(google_idx > research_idx, "Google under Research heading")
+        if social_idx is not None and github_idx is not None:
+            check(github_idx > social_idx, "GitHub under Social heading")
+
+        # GitHub should NOT be indented under Google (it's a root in its group)
+        if github_idx is not None:
+            github_line = lines[github_idx]
+            indent = len(github_line) - len(github_line.lstrip())
+            check(indent == 0, "cross-group child at root indent in its group",
+                  f"indent={indent}")
+
+
+def test_group_colors():
+    """12. Verify emoji rendering for multiple group colors."""
+    print("\n--- test_group_colors ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        colors = {
+            "grey": "⚪", "blue": "🔵", "red": "🔴", "yellow": "🟡",
+            "green": "🟢", "pink": "🩷", "purple": "🟣", "cyan": "🩵", "orange": "🟠",
+        }
+        events = []
+        tab_id = 1
+        for i, color in enumerate(colors):
+            gid = 100 + i
+            events.append({"type": "GROUP_UPDATE", "groupId": gid, "windowId": 100,
+                           "title": color.capitalize(), "color": color, "collapsed": False})
+            events.append({"type": "TAB_OPEN", "tabId": tab_id, "windowId": 100,
+                           "index": tab_id, "url": f"https://{color}.com",
+                           "title": f"Tab {color}", "groupId": gid})
+            tab_id += 1
+        proc = run_host(events, tmp)
+        check(proc.returncode == 0, "host exits 0")
+
+        md = read_md(tmp)
+        for color, emoji in colors.items():
+            expected = f"### {emoji} {color.capitalize()}"
+            check(expected in md, f"color {color} renders as {emoji}", md)
+
+
+def test_state_restart_with_groups():
+    """13. Verify state.json round-trip with groups data."""
+    print("\n--- test_state_restart_with_groups ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        events = [
+            {"type": "GROUP_UPDATE", "groupId": 10, "windowId": 100,
+             "title": "Research", "color": "blue", "collapsed": False},
+            {"type": "TAB_OPEN", "tabId": 1, "windowId": 100, "index": 0,
+             "url": "https://google.com", "title": "Google", "groupId": 10},
+            {"type": "TAB_OPEN", "tabId": 2, "windowId": 100, "index": 1,
+             "url": "https://github.com", "title": "GitHub"},
+        ]
+        proc1 = run_host(events, tmp)
+        check(proc1.returncode == 0, "first run exits 0")
+
+        md1 = read_md(tmp)
+        state = read_state(tmp)
+        check("tabs" in state, "state.json has tabs key", str(state.keys()))
+        check("groups" in state, "state.json has groups key", str(state.keys()))
+
+        # Restart — should produce identical markdown
+        proc2 = run_host([], tmp)
+        check(proc2.returncode == 0, "restart exits 0")
+
+        md2 = read_md(tmp)
+        check(md1 == md2, "current.md identical after restart with groups",
               f"BEFORE:\n{md1}\nAFTER:\n{md2}")
 
 
@@ -315,6 +484,12 @@ def main():
         test_tab_navigate,
         test_multiple_windows,
         test_restart_from_state,
+        test_group_basic,
+        test_tab_group_changed,
+        test_group_remove,
+        test_group_cross_parent,
+        test_group_colors,
+        test_state_restart_with_groups,
     ]
 
     for t in tests:

@@ -23,7 +23,8 @@ Chrome Extension (MV3 service worker)
 
 ## Key Design Decisions
 
-- 3 event types: TAB_OPEN, TAB_CLOSE, TAB_NAVIGATE
+- 6 event types: TAB_OPEN, TAB_CLOSE, TAB_NAVIGATE, GROUP_UPDATE, GROUP_REMOVE, TAB_GROUP_CHANGED
+- `tabGroups` permission enables Chrome tab group tracking (titles, colors, membership)
 - JSONL log format (not markdown) for the source of truth
 - Atomic file writes (temp + os.rename) for current.md and state.json
 - Ctrl+T new tabs are roots (openerTabId stripped for chrome://newtab)
