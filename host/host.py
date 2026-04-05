@@ -32,7 +32,7 @@ OUTPUT_DIR = Path(os.environ.get("BTT_OUTPUT_DIR", _SCRIPT_DIR / "output"))
 
 Tab = dict[str, Any]
 # Keys: tabId (int), windowId (int), parentId (int|None),
-#        url (str), title (str), children (list[int])
+#        url (str), title (str), index (int), children (list[int])
 
 tabs: dict[int, Tab] = {}
 
@@ -69,6 +69,7 @@ def handle_tab_open(event: dict) -> None:
     opener_id: int | None = event.get("openerTabId")
     url: str = event.get("url", "")
     title: str = event.get("title", "")
+    index: int = event.get("index", 0)
 
     parent_id: int | None = None
     if opener_id is not None and opener_id in tabs:
@@ -81,6 +82,7 @@ def handle_tab_open(event: dict) -> None:
         "parentId": parent_id,
         "url": url,
         "title": title,
+        "index": index,
         "children": [],
     }
 
@@ -122,10 +124,21 @@ def handle_tab_navigate(event: dict) -> None:
     tab["title"] = event.get("title", tab["title"])
 
 
+def handle_tab_move(event: dict) -> None:
+    tab_id: int = event["tabId"]
+    tab = tabs.get(tab_id)
+    if tab is None:
+        return
+    tab["index"] = event.get("index", tab["index"])
+    if "windowId" in event:
+        tab["windowId"] = event["windowId"]
+
+
 HANDLERS: dict[str, Any] = {
     "TAB_OPEN": handle_tab_open,
     "TAB_CLOSE": handle_tab_close,
     "TAB_NAVIGATE": handle_tab_navigate,
+    "TAB_MOVE": handle_tab_move,
 }
 
 # ---------------------------------------------------------------------------
@@ -191,13 +204,14 @@ def render_markdown() -> str:
         title = tab["title"] or tab["url"] or "(untitled)"
         url = tab["url"]
         lines.append(f"{indent}- [{title}]({url})")
-        for child_id in tab["children"]:
+        for child_id in sorted(tab["children"], key=lambda c: tabs[c]["index"] if c in tabs else 0):
             _render_tab(child_id, depth + 1)
 
     for wid in sorted(windows):
         root_ids = roots.get(wid, [])
         if not root_ids:
             continue
+        root_ids.sort(key=lambda tid: tabs[tid]["index"] if tid in tabs else 0)
         lines.append(f"\n## Window {wid}")
         for tid in root_ids:
             _render_tab(tid, 0)

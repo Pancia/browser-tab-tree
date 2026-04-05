@@ -35,6 +35,7 @@ chrome.tabs.onCreated.addListener((tab) => {
     ts: now(),
     tabId: tab.id,
     windowId: tab.windowId,
+    index: tab.index,
     url: tab.pendingUrl || tab.url || "",
     title: tab.title || "",
   };
@@ -73,6 +74,26 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   });
 });
 
+chrome.tabs.onMoved.addListener((tabId, moveInfo) => {
+  send({
+    type: "TAB_MOVE",
+    ts: now(),
+    tabId: tabId,
+    windowId: moveInfo.windowId || undefined,
+    index: moveInfo.toIndex,
+  });
+});
+
+chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
+  send({
+    type: "TAB_MOVE",
+    ts: now(),
+    tabId: tabId,
+    windowId: attachInfo.newWindowId,
+    index: attachInfo.newPosition,
+  });
+});
+
 // --- Startup: sync all existing tabs ---
 
 async function syncExistingTabs() {
@@ -83,6 +104,7 @@ async function syncExistingTabs() {
       ts: now(),
       tabId: tab.id,
       windowId: tab.windowId,
+      index: tab.index,
       url: tab.url || "",
       title: tab.title || "",
     });
