@@ -1,5 +1,5 @@
 // Browser Tab Tree — MV3 service worker
-// Phase 3: TAB_OPEN with openerTabId tree structure, TAB_CLOSE with orphan promotion
+// Phase 4: TAB_OPEN, TAB_CLOSE, TAB_NAVIGATE with URL filtering
 
 const HOST_NAME = "com.browser_tab_tree";
 
@@ -49,6 +49,24 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     type: "TAB_CLOSE",
     ts: now(),
     tabId: tabId,
+  });
+});
+
+// URL filter: only allow http/https URLs (skip chrome://, about:, etc.)
+function isNavigableUrl(url) {
+  if (!url) return false;
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!changeInfo.url) return;
+  if (!isNavigableUrl(changeInfo.url)) return;
+  send({
+    type: "TAB_NAVIGATE",
+    ts: now(),
+    tabId: tabId,
+    url: changeInfo.url,
+    title: tab.title || "",
   });
 });
 

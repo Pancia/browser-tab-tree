@@ -78,6 +78,12 @@ check("has onCreated listener", "chrome.tabs.onCreated" in bg_js)
 check("has onRemoved listener", "chrome.tabs.onRemoved" in bg_js)
 check("sends TAB_OPEN", '"TAB_OPEN"' in bg_js)
 check("sends TAB_CLOSE", '"TAB_CLOSE"' in bg_js)
+check("sends TAB_NAVIGATE", '"TAB_NAVIGATE"' in bg_js)
+check("has onUpdated listener", "chrome.tabs.onUpdated" in bg_js)
+check("has URL filter function", "isNavigableUrl" in bg_js)
+check("filters on changeInfo.url", "changeInfo.url" in bg_js)
+check("checks http:// protocol", 'http://' in bg_js)
+check("checks https:// protocol", 'https://' in bg_js)
 check("sends openerTabId", "openerTabId" in bg_js)
 check("has startup sync", "chrome.tabs.query" in bg_js)
 check("has port disconnect handler", "onDisconnect" in bg_js)
@@ -141,6 +147,80 @@ with tempfile.TemporaryDirectory() as tmpdir:
     state = json.loads((output_dir / "state.json").read_text())
     tab3 = state.get("3", state.get(3, {}))
     check("tab 3 parentId is now 1 (grandparent)", tab3.get("parentId") == 1)
+
+
+# ===== Test: TAB_NAVIGATE updates URL/title in-place (Phase 4) =====
+print("\n--- test_e2e_tab_navigate ---")
+with tempfile.TemporaryDirectory() as tmpdir:
+    output_dir = Path(tmpdir)
+    events = [
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:00Z", "tabId": 1, "windowId": 100,
+         "url": "https://google.com", "title": "Google"},
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:01Z", "tabId": 2, "windowId": 100,
+         "url": "https://github.com", "title": "GitHub", "openerTabId": 1},
+        {"type": "TAB_NAVIGATE", "ts": "2026-04-04T12:00:02Z", "tabId": 2,
+         "url": "https://github.com/fulcrologic/fulcro", "title": "Fulcro"},
+    ]
+    result = run_host(events, output_dir)
+    check("host exits 0", result.returncode == 0)
+
+    md = (output_dir / "current.md").read_text()
+    check("old URL gone", "https://github.com\"" not in md or "fulcro" in md)
+    check("new URL present", "https://github.com/fulcrologic/fulcro" in md)
+    check("new title present", "Fulcro" in md)
+    # Tree structure preserved — still child of tab 1
+    lines = md.splitlines()
+    fulcro_line = next((l for l in lines if "Fulcro" in l), "")
+    check("navigate preserves tree (still indented)", fulcro_line.startswith("  - ["))
+
+    state = json.loads((output_dir / "state.json").read_text())
+    tab2 = state.get("2", state.get(2, {}))
+    check("state URL updated", tab2.get("url") == "https://github.com/fulcrologic/fulcro")
+    check("state title updated", tab2.get("title") == "Fulcro")
+    check("state parentId preserved", tab2.get("parentId") == 1)
+
+
+# ===== Test: TAB_NAVIGATE for unknown tab is no-op =====
+print("\n--- test_e2e_tab_navigate_unknown ---")
+with tempfile.TemporaryDirectory() as tmpdir:
+    output_dir = Path(tmpdir)
+    events = [
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:00Z", "tabId": 1, "windowId": 100,
+         "url": "https://google.com", "title": "Google"},
+        {"type": "TAB_NAVIGATE", "ts": "2026-04-04T12:00:01Z", "tabId": 999,
+         "url": "https://example.com", "title": "Example"},
+    ]
+    result = run_host(events, output_dir)
+    check("host exits 0", result.returncode == 0)
+
+    md = (output_dir / "current.md").read_text()
+    check("unknown tab not added", "Example" not in md)
+    check("existing tab still present", "Google" in md)
+
+    state = json.loads((output_dir / "state.json").read_text())
+    check("state has only 1 tab", len(state) == 1)
+
+
+# ===== Test: TAB_NAVIGATE logged to JSONL =====
+print("\n--- test_e2e_tab_navigate_logged ---")
+with tempfile.TemporaryDirectory() as tmpdir:
+    output_dir = Path(tmpdir)
+    events = [
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:00Z", "tabId": 1, "windowId": 100,
+         "url": "https://google.com", "title": "Google"},
+        {"type": "TAB_NAVIGATE", "ts": "2026-04-04T12:00:01Z", "tabId": 1,
+         "url": "https://google.com/search?q=clojure", "title": "Google Search: clojure"},
+    ]
+    result = run_host(events, output_dir)
+    check("host exits 0", result.returncode == 0)
+
+    log_files = list((output_dir / "logs").glob("*.jsonl"))
+    check("log file created", len(log_files) == 1)
+    log_lines = log_files[0].read_text().strip().splitlines()
+    check("2 log entries (open + navigate)", len(log_lines) == 2)
+    nav_entry = json.loads(log_lines[1])
+    check("nav entry type is TAB_NAVIGATE", nav_entry.get("type") == "TAB_NAVIGATE")
+    check("nav entry has new URL", nav_entry.get("url") == "https://google.com/search?q=clojure")
 
 
 # ===== Test: end-to-end flat tab list (Phase 2 behavior) =====
