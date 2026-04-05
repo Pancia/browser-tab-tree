@@ -78,9 +78,69 @@ check("has onCreated listener", "chrome.tabs.onCreated" in bg_js)
 check("has onRemoved listener", "chrome.tabs.onRemoved" in bg_js)
 check("sends TAB_OPEN", '"TAB_OPEN"' in bg_js)
 check("sends TAB_CLOSE", '"TAB_CLOSE"' in bg_js)
+check("sends openerTabId", "openerTabId" in bg_js)
 check("has startup sync", "chrome.tabs.query" in bg_js)
 check("has port disconnect handler", "onDisconnect" in bg_js)
 check("has ensurePort function", "ensurePort" in bg_js)
+
+
+# ===== Test: end-to-end tree structure via openerTabId (Phase 3) =====
+print("\n--- test_e2e_opener_tab_tree ---")
+with tempfile.TemporaryDirectory() as tmpdir:
+    output_dir = Path(tmpdir)
+    events = [
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:00Z", "tabId": 1, "windowId": 100,
+         "url": "https://google.com", "title": "Google"},
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:01Z", "tabId": 2, "windowId": 100,
+         "url": "https://github.com", "title": "GitHub", "openerTabId": 1},
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:02Z", "tabId": 3, "windowId": 100,
+         "url": "https://docs.python.org", "title": "Python Docs", "openerTabId": 1},
+    ]
+    result = run_host(events, output_dir)
+    check("host exits 0", result.returncode == 0)
+
+    md = (output_dir / "current.md").read_text()
+    lines = md.splitlines()
+    google_line = next((l for l in lines if "Google" in l), "")
+    github_line = next((l for l in lines if "GitHub" in l), "")
+    python_line = next((l for l in lines if "Python Docs" in l), "")
+    check("Google is root (no indent)", google_line.startswith("- ["))
+    check("GitHub is child (indented)", github_line.startswith("  - ["))
+    check("Python Docs is child (indented)", python_line.startswith("  - ["))
+
+    state = json.loads((output_dir / "state.json").read_text())
+    tab2 = state.get("2", state.get(2, {}))
+    check("tab 2 parentId is 1", tab2.get("parentId") == 1)
+
+
+# ===== Test: orphan promotion on TAB_CLOSE (Phase 3) =====
+print("\n--- test_e2e_orphan_promotion ---")
+with tempfile.TemporaryDirectory() as tmpdir:
+    output_dir = Path(tmpdir)
+    events = [
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:00Z", "tabId": 1, "windowId": 100,
+         "url": "https://google.com", "title": "Google"},
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:01Z", "tabId": 2, "windowId": 100,
+         "url": "https://github.com", "title": "GitHub", "openerTabId": 1},
+        {"type": "TAB_OPEN", "ts": "2026-04-04T12:00:02Z", "tabId": 3, "windowId": 100,
+         "url": "https://docs.python.org", "title": "Python Docs", "openerTabId": 2},
+        # Close middle node — tab 3 should promote to child of tab 1
+        {"type": "TAB_CLOSE", "ts": "2026-04-04T12:00:03Z", "tabId": 2},
+    ]
+    result = run_host(events, output_dir)
+    check("host exits 0", result.returncode == 0)
+
+    md = (output_dir / "current.md").read_text()
+    check("GitHub removed", "GitHub" not in md)
+    lines = md.splitlines()
+    google_line = next((l for l in lines if "Google" in l), "")
+    python_line = next((l for l in lines if "Python Docs" in l), "")
+    check("Google still root", google_line.startswith("- ["))
+    check("Python Docs promoted to child of Google", python_line.startswith("  - ["))
+
+    state = json.loads((output_dir / "state.json").read_text())
+    tab3 = state.get("3", state.get(3, {}))
+    check("tab 3 parentId is now 1 (grandparent)", tab3.get("parentId") == 1)
 
 
 # ===== Test: end-to-end flat tab list (Phase 2 behavior) =====

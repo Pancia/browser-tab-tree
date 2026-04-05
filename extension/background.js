@@ -1,5 +1,5 @@
 // Browser Tab Tree — MV3 service worker
-// Phase 2: TAB_OPEN and TAB_CLOSE only (flat list, no openerTabId)
+// Phase 3: TAB_OPEN with openerTabId tree structure, TAB_CLOSE with orphan promotion
 
 const HOST_NAME = "com.browser_tab_tree";
 
@@ -30,14 +30,18 @@ function now() {
 // --- Event listeners ---
 
 chrome.tabs.onCreated.addListener((tab) => {
-  send({
+  const event = {
     type: "TAB_OPEN",
     ts: now(),
     tabId: tab.id,
     windowId: tab.windowId,
     url: tab.pendingUrl || tab.url || "",
     title: tab.title || "",
-  });
+  };
+  if (tab.openerTabId != null) {
+    event.openerTabId = tab.openerTabId;
+  }
+  send(event);
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
