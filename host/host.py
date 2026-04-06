@@ -10,6 +10,7 @@ prefix + JSON payload), maintains an in-memory tab tree, and writes:
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import struct
@@ -211,6 +212,24 @@ def _atomic_write(path: Path, data: str) -> None:
         raise
 
 
+def compress_old_logs() -> None:
+    """Gzip any JSONL logs from previous days."""
+    log_dir = OUTPUT_DIR / "logs"
+    if not log_dir.exists():
+        return
+    today = date.today().isoformat()
+    for log_file in log_dir.glob("*.jsonl"):
+        if log_file.stem == today:
+            continue
+        gz_path = log_file.with_suffix(".jsonl.gz")
+        try:
+            with open(log_file, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                f_out.writelines(f_in)
+            log_file.unlink()
+        except OSError:
+            pass
+
+
 def append_log(event: dict) -> None:
     log_dir = OUTPUT_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -341,6 +360,7 @@ def load_state() -> None:
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    compress_old_logs()
     load_state()
 
     while True:

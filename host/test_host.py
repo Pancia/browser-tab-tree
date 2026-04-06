@@ -7,12 +7,14 @@ checks the resulting current.md and state.json.
 Usage: python host/test_host.py
 """
 
+import gzip
 import json
 import os
 import struct
 import subprocess
 import sys
 import tempfile
+from datetime import date, timedelta
 
 HOST_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "host.py")
 
@@ -464,6 +466,42 @@ def test_state_restart_with_groups():
               f"BEFORE:\n{md1}\nAFTER:\n{md2}")
 
 
+def test_compress_old_logs():
+    """14. Old JSONL logs are gzipped on startup; today's log is left alone."""
+    print("\n--- test_compress_old_logs ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        log_dir = os.path.join(tmp, "logs")
+        os.makedirs(log_dir)
+
+        # Create a fake "old" log (yesterday)
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        old_log = os.path.join(log_dir, f"{yesterday}.jsonl")
+        content = '{"type":"TAB_OPEN","tabId":1}\n'
+        with open(old_log, "w") as f:
+            f.write(content)
+
+        # Run host with a single event (triggers compress_old_logs on startup)
+        events = [
+            {"type": "TAB_OPEN", "tabId": 99, "windowId": 1, "index": 0,
+             "url": "https://example.com", "title": "Example"},
+        ]
+        proc = run_host(events, tmp)
+        check(proc.returncode == 0, "host exits 0")
+
+        # Old log should be compressed
+        gz_path = os.path.join(log_dir, f"{yesterday}.jsonl.gz")
+        check(os.path.exists(gz_path), "old log was gzipped")
+        check(not os.path.exists(old_log), "original old log was removed")
+
+        # Verify gzip contents
+        with gzip.open(gz_path, "rt") as f:
+            check(f.read() == content, "gzipped content matches original")
+
+        # Today's log should still exist uncompressed
+        today_log = os.path.join(log_dir, f"{date.today().isoformat()}.jsonl")
+        check(os.path.exists(today_log), "today's log is still uncompressed")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -490,6 +528,7 @@ def main():
         test_group_cross_parent,
         test_group_colors,
         test_state_restart_with_groups,
+        test_compress_old_logs,
     ]
 
     for t in tests:
