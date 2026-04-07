@@ -16,6 +16,7 @@ import os
 import struct
 import sys
 import tempfile
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,50 @@ def read_message() -> dict | None:
     if len(raw_body) < msg_len:
         return None  # truncated body
     return json.loads(raw_body)
+
+
+def send_message(msg: dict) -> None:
+    """Send a native-messaging frame to the extension via stdout."""
+    raw = json.dumps(msg, separators=(",", ":")).encode("utf-8")
+    sys.stdout.buffer.write(struct.pack("<I", len(raw)))
+    sys.stdout.buffer.write(raw)
+    sys.stdout.buffer.flush()
+
+
+# ---------------------------------------------------------------------------
+# Command FIFO — accepts commands from CLI, forwards to extension
+# ---------------------------------------------------------------------------
+
+FIFO_PATH = OUTPUT_DIR / "cmd.fifo"
+
+
+def _ensure_fifo() -> None:
+    """Create the FIFO if it doesn't exist."""
+    if FIFO_PATH.exists():
+        if not FIFO_PATH.is_fifo():
+            FIFO_PATH.unlink()
+        else:
+            return
+    os.mkfifo(FIFO_PATH)
+
+
+def _fifo_reader() -> None:
+    """Background thread: read JSON commands from FIFO and send to extension."""
+    _ensure_fifo()
+    while True:
+        try:
+            with open(FIFO_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        cmd = json.loads(line)
+                        send_message(cmd)
+                    except (json.JSONDecodeError, OSError) as e:
+                        sys.stderr.write(f"[host] bad command: {e}\n")
+        except OSError:
+            pass  # FIFO was deleted or broken, retry
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +407,10 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     compress_old_logs()
     load_state()
+
+    # Start command FIFO listener in background
+    t = threading.Thread(target=_fifo_reader, daemon=True)
+    t.start()
 
     while True:
         msg = read_message()

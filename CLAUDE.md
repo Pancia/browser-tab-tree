@@ -31,6 +31,22 @@ Chrome Extension (MV3 service worker)
 - Closed tabs removed from tree immediately (recoverable from log)
 - Orphaned children promoted to grandparent (or root)
 - Config via `~/.config/browser-tab-tree/config.json`, default output to `~/.local/share/browser-tab-tree`
+- **Active output dir**: `~/TheAkashicRecords/browser-sync` (set via `output_dir` in config.json)
+
+## Command Channel (FIFO)
+
+The host accepts commands via a named pipe at `$BTT_OUTPUT_DIR/cmd.fifo`. Commands are JSON lines forwarded to the extension via native messaging stdout. The extension executes them using Chrome APIs.
+
+Supported commands:
+- `group_tabs` — `{"command":"group_tabs","tabIds":[...],"title":"...","color":"blue"}`
+- `move_tab` — `{"command":"move_tab","tabId":123,"index":0,"windowId":456}`
+- `close_tab` — `{"command":"close_tab","tabId":123}`
+- `ungroup_tabs` — `{"command":"ungroup_tabs","tabIds":[...]}`
+
+Example:
+```bash
+echo '{"command":"group_tabs","tabIds":[111,222],"title":"research","color":"green"}' > ~/TheAkashicRecords/browser-sync/cmd.fifo
+```
 
 ## Running Tests
 

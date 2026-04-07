@@ -8,6 +8,7 @@ let port = null;
 function ensurePort() {
   if (!port) {
     port = chrome.runtime.connectNative(HOST_NAME);
+    port.onMessage.addListener(handleCommand);
     port.onDisconnect.addListener(() => {
       const err = chrome.runtime.lastError;
       console.error(`[BrowserTabTree] Host disconnected: ${err ? err.message : "unknown reason"}`);
@@ -15,6 +16,35 @@ function ensurePort() {
     });
   }
   return port;
+}
+
+// --- Command handler (messages FROM host) ---
+
+async function handleCommand(msg) {
+  console.log("[BrowserTabTree] Command received:", msg);
+  try {
+    if (msg.command === "group_tabs") {
+      const groupId = await chrome.tabs.group({
+        tabIds: msg.tabIds,
+        createProperties: msg.windowId ? { windowId: msg.windowId } : undefined,
+      });
+      if (msg.title || msg.color) {
+        await chrome.tabGroups.update(groupId, {
+          ...(msg.title && { title: msg.title }),
+          ...(msg.color && { color: msg.color }),
+        });
+      }
+      console.log("[BrowserTabTree] Grouped tabs, groupId:", groupId);
+    } else if (msg.command === "move_tab") {
+      await chrome.tabs.move(msg.tabId, { index: msg.index, ...(msg.windowId && { windowId: msg.windowId }) });
+    } else if (msg.command === "close_tab") {
+      await chrome.tabs.remove(msg.tabId);
+    } else if (msg.command === "ungroup_tabs") {
+      await chrome.tabs.ungroup(msg.tabIds);
+    }
+  } catch (e) {
+    console.error("[BrowserTabTree] Command error:", e);
+  }
 }
 
 function send(event) {
