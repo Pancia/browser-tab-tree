@@ -149,7 +149,7 @@ def main():
     print("Restore command sent", file=sys.stderr)
 
     if not no_follow:
-        progress_path = os.path.join(output_dir, "progress.jsonl")
+        progress_path = os.path.join(output_dir, "progress-latest.jsonl")
         tail_progress(progress_path)
 
 

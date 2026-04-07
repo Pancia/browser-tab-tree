@@ -221,11 +221,22 @@ def handle_sync_start(_event: dict) -> None:
     groups.clear()
 
 
+_progress_path: Path | None = None
+
+
 def handle_progress(event: dict) -> None:
-    """Write command progress events to a dedicated file for script consumption."""
-    progress_path = OUTPUT_DIR / "progress.jsonl"
-    mode = "w" if event.get("status") == "started" else "a"
-    with open(progress_path, mode) as f:
+    """Write command progress events to a timestamped file for script consumption."""
+    global _progress_path
+    if event.get("status") == "started":
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        _progress_path = OUTPUT_DIR / f"progress-{ts}.jsonl"
+        # Symlink latest for easy tailing
+        latest = OUTPUT_DIR / "progress-latest.jsonl"
+        latest.unlink(missing_ok=True)
+        latest.symlink_to(_progress_path.name)
+    if _progress_path is None:
+        _progress_path = OUTPUT_DIR / "progress-unknown.jsonl"
+    with open(_progress_path, "a") as f:
         f.write(json.dumps(event) + "\n")
 
 
