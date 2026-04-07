@@ -8,7 +8,7 @@ let port = null;
 function ensurePort() {
   if (!port) {
     port = chrome.runtime.connectNative(HOST_NAME);
-    port.onMessage.addListener(handleCommand);
+    port.onMessage.addListener(enqueueCommand);
     port.onDisconnect.addListener(() => {
       const err = chrome.runtime.lastError;
       console.error(`[BrowserTabTree] Host disconnected: ${err ? err.message : "unknown reason"}`);
@@ -19,6 +19,27 @@ function ensurePort() {
 }
 
 // --- Command handler (messages FROM host) ---
+// Commands are queued and executed sequentially so async Chrome API calls
+// don't race each other (e.g. ungroup must finish before group).
+
+const cmdQueue = [];
+let cmdRunning = false;
+
+function enqueueCommand(msg) {
+  if (!msg.command) return;
+  cmdQueue.push(msg);
+  drainQueue();
+}
+
+async function drainQueue() {
+  if (cmdRunning) return;
+  cmdRunning = true;
+  while (cmdQueue.length > 0) {
+    const msg = cmdQueue.shift();
+    await handleCommand(msg);
+  }
+  cmdRunning = false;
+}
 
 async function handleCommand(msg) {
   console.log("[BrowserTabTree] Command received:", msg);
