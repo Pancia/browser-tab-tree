@@ -88,14 +88,19 @@ function waitForTabLoading(tabId, timeoutMs = 5000) {
 }
 
 async function restoreSession(windows) {
-  console.log(`[BrowserTabTree] Restoring ${windows.length} windows`);
-  for (const win of windows) {
+  const totalTabs = windows.reduce((s, w) => s + w.tabs.length, 0);
+  console.log(`[BrowserTabTree] Restoring ${windows.length} windows, ${totalTabs} tabs`);
+  send({ type: "PROGRESS", command: "restore_session", status: "started", totalWindows: windows.length, totalTabs });
+
+  for (let winIdx = 0; winIdx < windows.length; winIdx++) {
+    const win = windows[winIdx];
     const newWin = await chrome.windows.create({ focused: false });
     const windowId = newWin.id;
     // Track the auto-created newtab so we can close it after
     const autoTabId = newWin.tabs?.[0]?.id;
 
-    console.log(`[BrowserTabTree] Window created (id=${windowId}), restoring ${win.tabs.length} tabs`);
+    send({ type: "PROGRESS", command: "restore_session", status: "window_created", window: winIdx + 1, totalWindows: windows.length, tabCount: win.tabs.length });
+    console.log(`[BrowserTabTree] Window ${winIdx + 1}/${windows.length} created (id=${windowId}), restoring ${win.tabs.length} tabs`);
 
     // Build index of which tabs belong to which group
     const tabToGroup = new Map();
@@ -147,6 +152,9 @@ async function restoreSession(windows) {
           console.warn(`[BrowserTabTree] Could not discard tab ${tabId}: ${e.message}`);
         }
       }
+
+      const label = group ? group.title : "(ungrouped)";
+      send({ type: "PROGRESS", command: "restore_session", status: "batch_discarded", group: label, tabCount: batchIds.length, window: winIdx + 1 });
     }
 
     // Find ungrouped tab indices
@@ -170,6 +178,7 @@ async function restoreSession(windows) {
 
     console.log(`[BrowserTabTree] Window ${windowId} done`);
   }
+  send({ type: "PROGRESS", command: "restore_session", status: "complete", totalWindows: windows.length, totalTabs });
   console.log("[BrowserTabTree] Session restore complete");
 }
 

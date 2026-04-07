@@ -221,6 +221,14 @@ def handle_sync_start(_event: dict) -> None:
     groups.clear()
 
 
+def handle_progress(event: dict) -> None:
+    """Write command progress events to a dedicated file for script consumption."""
+    progress_path = OUTPUT_DIR / "progress.jsonl"
+    mode = "w" if event.get("status") == "started" else "a"
+    with open(progress_path, mode) as f:
+        f.write(json.dumps(event) + "\n")
+
+
 HANDLERS: dict[str, Any] = {
     "SYNC_START": handle_sync_start,
     "TAB_OPEN": handle_tab_open,
@@ -230,6 +238,7 @@ HANDLERS: dict[str, Any] = {
     "GROUP_UPDATE": handle_group_update,
     "GROUP_REMOVE": handle_group_remove,
     "TAB_GROUP_CHANGED": handle_tab_group_changed,
+    "PROGRESS": handle_progress,
 }
 
 # ---------------------------------------------------------------------------
