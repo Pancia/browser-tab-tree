@@ -62,10 +62,115 @@ async function handleCommand(msg) {
       await chrome.tabs.remove(msg.tabId);
     } else if (msg.command === "ungroup_tabs") {
       await chrome.tabs.ungroup(msg.tabIds);
+    } else if (msg.command === "restore_session") {
+      await restoreSession(msg.windows);
     }
   } catch (e) {
     console.error("[BrowserTabTree] Command error:", e);
   }
+}
+
+function waitForTabLoading(tabId, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(); // proceed even on timeout
+    }, timeoutMs);
+    function listener(id, changeInfo) {
+      if (id === tabId && changeInfo.status === "loading") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+async function restoreSession(windows) {
+  console.log(`[BrowserTabTree] Restoring ${windows.length} windows`);
+  for (const win of windows) {
+    const newWin = await chrome.windows.create({ focused: false });
+    const windowId = newWin.id;
+    // Track the auto-created newtab so we can close it after
+    const autoTabId = newWin.tabs?.[0]?.id;
+
+    console.log(`[BrowserTabTree] Window created (id=${windowId}), restoring ${win.tabs.length} tabs`);
+
+    // Build index of which tabs belong to which group
+    const tabToGroup = new Map();
+    for (const group of (win.groups || [])) {
+      for (const idx of group.tabIndices) {
+        tabToGroup.set(idx, group);
+      }
+    }
+
+    // Process tabs group-by-group: create → group → discard, then next batch
+    // Ungrouped tabs first, then each group in order
+    const createdTabIds = new Array(win.tabs.length).fill(null);
+
+    // Helper: create a batch of tabs, optionally group them, then discard
+    async function createBatch(indices, group) {
+      const batchIds = [];
+      for (const idx of indices) {
+        const tabDef = win.tabs[idx];
+        if (!tabDef.url || tabDef.url.startsWith("chrome://")) continue;
+        const tab = await chrome.tabs.create({
+          url: tabDef.url,
+          active: false,
+          windowId,
+        });
+        await waitForTabLoading(tab.id);
+        createdTabIds[idx] = tab.id;
+        batchIds.push(tab.id);
+      }
+      if (batchIds.length === 0) return;
+
+      // Group if needed
+      if (group) {
+        const groupId = await chrome.tabs.group({
+          tabIds: batchIds,
+          createProperties: { windowId },
+        });
+        await chrome.tabGroups.update(groupId, {
+          ...(group.title && { title: group.title }),
+          ...(group.color && { color: group.color }),
+        });
+        console.log(`[BrowserTabTree] Group "${group.title}" (${group.color}) with ${batchIds.length} tabs`);
+      }
+
+      // Discard this batch immediately
+      for (const tabId of batchIds) {
+        try {
+          await chrome.tabs.discard(tabId);
+        } catch (e) {
+          console.warn(`[BrowserTabTree] Could not discard tab ${tabId}: ${e.message}`);
+        }
+      }
+    }
+
+    // Find ungrouped tab indices
+    const ungroupedIndices = [];
+    for (let i = 0; i < win.tabs.length; i++) {
+      if (!tabToGroup.has(i)) ungroupedIndices.push(i);
+    }
+    await createBatch(ungroupedIndices, null);
+
+    // Process each group
+    for (const group of (win.groups || [])) {
+      await createBatch(group.tabIndices, group);
+    }
+
+    // Close the auto-created newtab
+    if (autoTabId) {
+      try {
+        await chrome.tabs.remove(autoTabId);
+      } catch (_) {}
+    }
+
+    console.log(`[BrowserTabTree] Window ${windowId} done`);
+  }
+  console.log("[BrowserTabTree] Session restore complete");
 }
 
 function send(event) {
